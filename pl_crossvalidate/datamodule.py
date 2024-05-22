@@ -60,6 +60,7 @@ class KFoldDataModule(LightningDataModule):
         num_folds: int = 5,
         shuffle: bool = False,
         stratified: bool = False,
+        neasted_k_fold: bool = False,
         train_dataloader: Optional[DataLoader] = None,
         val_dataloaders: Optional[Union[DataLoader, Sequence[DataLoader]]] = None,
         datamodule: Optional[LightningDataModule] = None,
@@ -87,8 +88,14 @@ class KFoldDataModule(LightningDataModule):
             raise ValueError("Stratified must be a boolean value")
         self.stratified = stratified
 
+        if not isinstance(neasted_k_fold, bool):
+            raise ValueError("Stratified must be a boolean value")
+        self.neasted_k_fold = neasted_k_fold
+
         self.fold_index = 0
+        self.inner_fold_index = 0
         self.splits = None
+        self.inner_splits= None
         self.dataloader_settings = None
         self.label_extractor = lambda batch: batch[1]  # return second element
 
@@ -106,19 +113,54 @@ class KFoldDataModule(LightningDataModule):
                         " is initialized correctly"
                     )
                 splitter = StratifiedKFold(self.num_folds, shuffle=self.shuffle)
+                if self.neasted_k_fold:
+                    inner_splitter = StratifiedKFold(self.num_folds - 1, shuffle=self.shuffle)
             else:
                 splitter = KFold(self.num_folds, shuffle=self.shuffle)
+                if self.neasted_k_fold:
+                    inner_splitter = KFold(self.num_folds - 1, shuffle=self.shuffle)
+
             self.train_dataset = self.datamodule.train_dataloader().dataset
             self.splits = [split for split in splitter.split(range(len(self.train_dataset)), y=labels)]
+            if self.neasted_k_fold:
+                get_labels = lambda labels, indices: [labels[i] for i in indices]
+                if self.stratified:
+                    self.inner_splits = [next(inner_splitter.split(fold_indices, y=get_labels(labels, fold_indices)))
+                                         for fold_indices, _ in self.splits]
+                else:
+                    self.inner_splits = [next(inner_splitter.split(fold_indices))
+                                         for fold_indices, _ in self.splits]
 
     def train_dataloader(self) -> DataLoader:
         """Return training dataloader on the current fold."""
         self.setup_folds()
         train_fold = Subset(self.train_dataset, self.splits[self.fold_index][0])
+        if self.neasted_k_fold:
+            train_indices, _ = self.splits[self.fold_index]
+            # print('Train Inner Split')
+            # print(self.inner_splits[self.fold_index])
+            inner_train_indices, _ = self.inner_splits[self.fold_index]
+            train_indices_slice = train_indices[inner_train_indices]
+            train_fold = Subset(self.train_dataset, train_indices_slice)
+
         return DataLoader(train_fold, **self.dataloader_setting)
 
     def val_dataloader(self) -> DataLoader:
         """Return validation dataloader, which is the same regardless of the fold."""
+        if self.neasted_k_fold:
+            self.setup_folds()
+            # print('Val Split')
+            # print(self.splits[self.fold_index])
+            train_indices, _ = self.splits[self.fold_index]
+            # print('Val Inner Split')
+            # print(self.inner_splits[self.fold_index])
+            _, inner_test_indices = self.inner_splits[self.fold_index]
+            val_indices_slice = train_indices[inner_test_indices]
+            val_fold = Subset(self.train_dataset, val_indices_slice)
+
+            return DataLoader(val_fold, **self.dataloader_setting)
+
+
         return self.datamodule.val_dataloader()
 
     def test_dataloader(self) -> DataLoader:

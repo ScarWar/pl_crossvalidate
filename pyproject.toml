@@ -11,7 +11,7 @@ authors = [
     {name = "Nicki Skafte Detlefsen", email = "skaftenicki@gmail.com"},
 ]
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.9"
 dynamic = ["dependencies", "optional-dependencies"]
 
 [tool.setuptools]
